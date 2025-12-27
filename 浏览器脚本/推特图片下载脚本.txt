@@ -1,0 +1,4 @@
+https://greasyfork.org/zh-CN/scripts/529453-twitter-x-media-downloader
+
+文件名格式设置：
+twitter-{user-id}-{status-id}-{date-time:YYYY.MM.DD}
