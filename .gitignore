@@ -1,0 +1,39 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+.venv/
+env/
+.env
+
+# IDE / Editors
+.idea/
+.vscode/
+.cursor/
+*.swp
+*.swo
+*.swn
+
+# Mac OS
+.DS_Store
+
+# Data files (Database and Comike Info files)
+*.csv
+
+# Generated Reports
+暂无品书列表*.html
+*.html
+
+# Image files (Input/Output artifacts)
+*.jpg
+*.png
+*.jpeg
+
+# Directories mentioned in scripts (if created locally)
+已处理/
+原名备份/
+
+# Windows
+Thumbs.db
+ehthumbs.db
