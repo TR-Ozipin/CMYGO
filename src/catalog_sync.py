@@ -27,50 +27,93 @@ def save_favorites_to_csv(favorites_data, output_dir):
 def extract_favorites_from_page(page):
     """
     从当前页面提取收藏社团信息
+    优先从页面中的 JSON 数据提取（更准确），回退到 DOM 解析
     """
     favorites = []
     
     # 等待页面加载完成
     try:
-        page.wait_for_selector('.exhibitorList, .circle-list, [class*="circle"]', timeout=10000)
+        page.wait_for_selector('table.md-infotable, #TheModel', timeout=10000)
     except PlaywrightTimeout:
         print("[WARN] 页面加载超时，可能没有收藏或页面结构变动")
         return favorites
     
-    # 这里的选择器需要根据实际页面结构调整
-    # 以下是一个通用的示例，需要根据实际情况修改
     print("[INFO] 正在提取社团信息...")
     
-    # 尝试多种可能的选择器（Circle.ms 的页面结构）
-    circle_cards = page.query_selector_all('.exhibitorDataRow, .circleData, [class*="exhibitor"]')
+    # 方法1: 尝试提取页面中的 JSON 数据（最稳定）
+    try:
+        import json
+        json_element = page.query_selector('#TheModel')
+        if json_element:
+            json_text = json_element.inner_text()
+            data = json.loads(json_text)
+            circles = data.get('Circles', [])
+            
+            if circles:
+                print(f"[OK] 从 JSON 数据中提取到 {len(circles)} 个社团")
+                for circle in circles:
+                    # 提取推特链接
+                    twitter_url = circle.get('TwitterUrl', '')
+                    pixiv_url = circle.get('PixivUrl', '')
+                    備注_links = []
+                    if twitter_url:
+                        備注_links.append(twitter_url)
+                    if pixiv_url:
+                        備注_links.append(pixiv_url)
+                    
+                    # 构造数据
+                    data_row = {
+                        '摊位': circle.get('HaichiStr', '').replace('曜日', '').strip(),  # 去掉"曜日"
+                        '社团': circle.get('Name', ''),
+                        '作者': circle.get('Author', ''),
+                        '备注': ' '.join(備注_links),  # 外部链接
+                        '合并': '',  # 后续计算
+                        '社团详情': f"https://webcatalog-free.circle.ms/Circle/{circle.get('Id', '')}" if circle.get('Id') else '',
+                        '颜色': f"color-{circle.get('Favorite', {}).get('Color', 0)}" if circle.get('Favorite', {}).get('Color', 0) > 0 else ''
+                    }
+                    
+                    # 计算合并字段
+                    if data_row['摊位'] and data_row['社团']:
+                        data_row['合并'] = f"{data_row['摊位']} {data_row['社团']}"
+                    
+                    favorites.append(data_row)
+                
+                return favorites
+    except Exception as e:
+        print(f"[WARN] JSON 提取失败: {e}，回退到 DOM 解析")
     
-    if not circle_cards:
-        print("[WARN] 未找到社团卡片，可能需要调整选择器")
-        # 输出页面 HTML 以便调试
-        # print(page.content())
+    # 方法2: DOM 解析（回退方案）
+    circle_rows = page.query_selector_all('tr.webcatalog-circle-list-detail')
+    
+    if not circle_rows:
+        print("[WARN] 未找到社团行，可能需要调整选择器")
         return favorites
     
-    for card in circle_cards:
+    for row in circle_rows:
         try:
-            # 这些字段名需要根据实际页面调整
-            space = card.query_selector('.space, [class*="space"]')
-            circle_name = card.query_selector('.circleName, [class*="circle-name"]')
-            author = card.query_selector('.penName, [class*="author"]')
-            detail_link = card.query_selector('a[href*="/Circle/"], a[href*="Detail"]')
+            # 摊位信息
+            space_elem = row.query_selector('td.infotable-space span')
+            space = space_elem.inner_text().strip() if space_elem else ''
             
+            # 社团名
+            circle_name_elem = row.query_selector('td.infotable-circlename a')
+            circle_name = circle_name_elem.inner_text().strip() if circle_name_elem else ''
+            detail_url = circle_name_elem.get_attribute('href') if circle_name_elem else ''
+            
+            # 类型
+            genre_elem = row.query_selector('td.infotable-genre')
+            genre = genre_elem.inner_text().strip() if genre_elem else ''
+            
+            # 构造数据
             data = {
-                '摊位': space.inner_text().strip() if space else '',
-                '社团': circle_name.inner_text().strip() if circle_name else '',
-                '作者': author.inner_text().strip() if author else '',
-                '备注': '',  # 可以后续填充外部链接
-                '合并': '',  # 后续计算
-                '社团详情': f"https://webcatalog.circle.ms{detail_link.get_attribute('href')}" if detail_link else '',
-                '颜色': ''  # 默认空
+                '摊位': space,
+                '社团': circle_name,
+                '作者': '',  # DOM 中没有直接的作者字段
+                '备注': genre,  # 暂用类型作为备注
+                '合并': f"{space} {circle_name}" if space and circle_name else '',
+                '社团详情': f"https://webcatalog-free.circle.ms{detail_url}" if detail_url else '',
+                '颜色': ''
             }
-            
-            # 计算合并字段
-            if data['摊位'] and data['社团']:
-                data['合并'] = f"{data['摊位']} {data['社团']}"
             
             favorites.append(data)
             
@@ -78,7 +121,7 @@ def extract_favorites_from_page(page):
             print(f"[WARN] 提取社团信息失败: {e}")
             continue
     
-    print(f"[INFO] 当前页提取到 {len(favorites)} 个社团")
+    print(f"[INFO] 从 DOM 提取到 {len(favorites)} 个社团")
     return favorites
 
 def run_catalog_sync(config):
@@ -146,16 +189,32 @@ def run_catalog_sync(config):
             favorites = extract_favorites_from_page(page)
             all_favorites.extend(favorites)
             
-            # 检查是否有下一页
-            next_button = page.query_selector('.next-page, a[rel="next"], button:has-text("次へ"), button:has-text("下一页")')
+            # 检查是否有下一页（根据实际 HTML，分页信息在 m-pagination 中）
+            # 从 HTML 看，这个账号只有1个收藏，所以没有下一页按钮
+            # 一般情况下，检查分页标签
+            pagination = page.query_selector('.m-pagination-label')
+            if pagination:
+                pagination_text = pagination.inner_text()
+                print(f"[INFO] 分页信息: {pagination_text}")
+                # 解析类似 "1 件中 1 件目 - 1 件目" 的文本
+                # 如果当前已是最后一页，则退出
             
-            if next_button and not next_button.is_disabled():
+            # 尝试查找"下一页"按钮
+            # 在实际页面中，如果有多页，会有类似的结构
+            next_link = page.query_selector('a[href*="page="]:has-text("次へ"), a[href*="page="]:has-text("›"), a.next')
+            
+            if next_link and not next_link.is_disabled():
                 print("[INFO] 跳转到下一页...")
-                next_button.click()
+                next_link.click()
                 time.sleep(2)  # 等待页面加载
                 page_num += 1
             else:
                 print("[INFO] 已到达最后一页")
+                break
+            
+            # 安全机制：最多翻100页（避免死循环）
+            if page_num > 100:
+                print("[WARN] 已达到最大页数限制")
                 break
         
         print(f"[OK] 共收集到 {len(all_favorites)} 个收藏社团")
