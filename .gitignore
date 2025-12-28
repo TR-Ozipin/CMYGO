@@ -6,6 +6,11 @@ venv/
 .venv/
 env/
 .env
+.env.local
+
+# Playwright / Browser Data
+browser_data/
+playwright-state.json
 
 # IDE / Editors
 .idea/

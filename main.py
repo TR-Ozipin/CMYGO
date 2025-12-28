@@ -92,7 +92,8 @@ def run_monitor(config):
 
 def main():
     parser = argparse.ArgumentParser(description="CMYGO 自动化工具")
-    parser.add_argument('action', choices=['monitor', 'rename', 'auto'], help="执行的操作: monitor(进度监控), rename(自动重命名), auto(全部执行)")
+    parser.add_argument('action', choices=['monitor', 'rename', 'auto', 'sync', 'sync-debug'], 
+                       help="执行的操作: monitor(进度监控), rename(自动重命名), auto(全部执行), sync(同步收藏), sync-debug(调试模式)")
     parser.add_argument('--config', default='config.yaml', help="配置文件路径")
     
     args = parser.parse_args()
@@ -108,10 +109,18 @@ def main():
     elif args.action == 'rename':
         from src.rename import run_rename
         run_rename(config)
+    elif args.action == 'sync':
+        from src.catalog_sync import run_catalog_sync
+        run_catalog_sync(config)
+    elif args.action == 'sync-debug':
+        from src.catalog_sync import run_catalog_sync_debug
+        run_catalog_sync_debug(config)
     elif args.action == 'auto':
         from src.rename import run_rename
-        run_rename(config)
-        run_monitor(config)
+        from src.catalog_sync import run_catalog_sync
+        run_catalog_sync(config)  # 先同步最新收藏
+        run_rename(config)  # 然后重命名
+        run_monitor(config)  # 最后生成报告
 
 if __name__ == '__main__':
     main()
