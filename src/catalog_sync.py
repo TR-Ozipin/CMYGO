@@ -1,9 +1,7 @@
-import os
 import csv
-import time
 from pathlib import Path
 from datetime import datetime
-from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeout
+from playwright.async_api import async_playwright, TimeoutError as PlaywrightTimeout
 
 def save_favorites_to_csv(favorites_data, output_dir):
     """
@@ -24,7 +22,7 @@ def save_favorites_to_csv(favorites_data, output_dir):
     print(f"[OK] 导出 CSV: {output_path} (共 {len(favorites_data)} 条)")
     return output_path
 
-def extract_favorites_from_page(page):
+async def extract_favorites_from_page(page):
     """
     从当前页面提取收藏社团信息
     优先从页面中的 JSON 数据提取（更准确），回退到 DOM 解析
@@ -33,7 +31,7 @@ def extract_favorites_from_page(page):
     
     # 等待页面加载完成
     try:
-        page.wait_for_selector('table.md-infotable, #TheModel', timeout=10000)
+        await page.wait_for_selector('table.md-infotable, #TheModel', timeout=10000)
     except PlaywrightTimeout:
         print("[WARN] 页面加载超时，可能没有收藏或页面结构变动")
         return favorites
@@ -43,9 +41,9 @@ def extract_favorites_from_page(page):
     # 方法1: 尝试提取页面中的 JSON 数据（最稳定）
     try:
         import json
-        json_element = page.query_selector('#TheModel')
+        json_element = await page.query_selector('#TheModel')
         if json_element:
-            json_text = json_element.inner_text()
+            json_text = await json_element.inner_text()
             data = json.loads(json_text)
             circles = data.get('Circles', [])
             
@@ -83,7 +81,7 @@ def extract_favorites_from_page(page):
         print(f"[WARN] JSON 提取失败: {e}，回退到 DOM 解析")
     
     # 方法2: DOM 解析（回退方案）
-    circle_rows = page.query_selector_all('tr.webcatalog-circle-list-detail')
+    circle_rows = await page.query_selector_all('tr.webcatalog-circle-list-detail')
     
     if not circle_rows:
         print("[WARN] 未找到社团行，可能需要调整选择器")
@@ -92,17 +90,20 @@ def extract_favorites_from_page(page):
     for row in circle_rows:
         try:
             # 摊位信息
-            space_elem = row.query_selector('td.infotable-space span')
-            space = space_elem.inner_text().strip() if space_elem else ''
+            space_elem = await row.query_selector('td.infotable-space span')
+            space = await space_elem.inner_text() if space_elem else ''
+            space = space.strip()
             
             # 社团名
-            circle_name_elem = row.query_selector('td.infotable-circlename a')
-            circle_name = circle_name_elem.inner_text().strip() if circle_name_elem else ''
-            detail_url = circle_name_elem.get_attribute('href') if circle_name_elem else ''
+            circle_name_elem = await row.query_selector('td.infotable-circlename a')
+            circle_name = await circle_name_elem.inner_text() if circle_name_elem else ''
+            circle_name = circle_name.strip()
+            detail_url = await circle_name_elem.get_attribute('href') if circle_name_elem else ''
             
             # 类型
-            genre_elem = row.query_selector('td.infotable-genre')
-            genre = genre_elem.inner_text().strip() if genre_elem else ''
+            genre_elem = await row.query_selector('td.infotable-genre')
+            genre = await genre_elem.inner_text() if genre_elem else ''
+            genre = genre.strip()
             
             # 构造数据
             data = {
@@ -124,7 +125,7 @@ def extract_favorites_from_page(page):
     print(f"[INFO] 从 DOM 提取到 {len(favorites)} 个社团")
     return favorites
 
-def run_catalog_sync(config):
+async def run_catalog_sync(config):
     """
     运行 Circle.ms 收藏同步
     """
@@ -140,9 +141,9 @@ def run_catalog_sync(config):
     print("[INFO] 启动浏览器...")
     print("[INFO] 使用本地 Chrome (如果首次运行，您可能需要手动登录)")
     
-    with sync_playwright() as p:
+    async with async_playwright() as p:
         # 使用持久化上下文，保存登录状态
-        context = p.chromium.launch_persistent_context(
+        context = await p.chromium.launch_persistent_context(
             user_data_dir=str(browser_data_dir),
             headless=False,  # 首次运行建议可见模式
             channel="chrome",  # 使用系统 Chrome
@@ -151,17 +152,17 @@ def run_catalog_sync(config):
             ]
         )
         
-        page = context.pages[0] if context.pages else context.new_page()
+        page = context.pages[0] if context.pages else await context.new_page()
         
         # 访问收藏页面
         print("[INFO] 访问 Circle.ms 收藏页面...")
         favorite_url = "https://webcatalog.circle.ms/Favorite/List"
         
         try:
-            page.goto(favorite_url, wait_until="networkidle", timeout=30000)
+            await page.goto(favorite_url, wait_until="networkidle", timeout=30000)
         except Exception as e:
             print(f"[ERROR] 页面加载失败: {e}")
-            context.close()
+            await context.close()
             return
         
         # 检查是否需要登录
@@ -171,11 +172,11 @@ def run_catalog_sync(config):
             
             # 等待用户登录（监测 URL 变化）
             try:
-                page.wait_for_url("**/Favorite/**", timeout=120000)  # 等待最多2分钟
+                await page.wait_for_url("**/Favorite/**", timeout=120000)  # 等待最多2分钟
                 print("[OK] 登录成功！")
             except PlaywrightTimeout:
                 print("[ERROR] 登录超时，脚本退出")
-                context.close()
+                await context.close()
                 return
         
         # 收集所有收藏
@@ -186,27 +187,27 @@ def run_catalog_sync(config):
             print(f"[INFO] 正在处理第 {page_num} 页...")
             
             # 提取当前页数据
-            favorites = extract_favorites_from_page(page)
+            favorites = await extract_favorites_from_page(page)
             all_favorites.extend(favorites)
             
             # 检查是否有下一页（根据实际 HTML，分页信息在 m-pagination 中）
             # 从 HTML 看，这个账号只有1个收藏，所以没有下一页按钮
             # 一般情况下，检查分页标签
-            pagination = page.query_selector('.m-pagination-label')
+            pagination = await page.query_selector('.m-pagination-label')
             if pagination:
-                pagination_text = pagination.inner_text()
+                pagination_text = await pagination.inner_text()
                 print(f"[INFO] 分页信息: {pagination_text}")
                 # 解析类似 "1 件中 1 件目 - 1 件目" 的文本
                 # 如果当前已是最后一页，则退出
             
             # 尝试查找"下一页"按钮
             # 在实际页面中，如果有多页，会有类似的结构
-            next_link = page.query_selector('a[href*="page="]:has-text("次へ"), a[href*="page="]:has-text("›"), a.next')
+            next_link = await page.query_selector('a[href*="page="]:has-text("次へ"), a[href*="page="]:has-text("›"), a.next')
             
-            if next_link and not next_link.is_disabled():
+            if next_link and not await next_link.is_disabled():
                 print("[INFO] 跳转到下一页...")
-                next_link.click()
-                time.sleep(2)  # 等待页面加载
+                await next_link.click()
+                await page.wait_for_timeout(2000)  # 等待页面加载
                 page_num += 1
             else:
                 print("[INFO] 已到达最后一页")
@@ -227,38 +228,36 @@ def run_catalog_sync(config):
         
         # 关闭浏览器
         print("[INFO] 关闭浏览器...")
-        context.close()
+        await context.close()
 
-def run_catalog_sync_debug(config):
+async def run_catalog_sync_debug(config):
     """
     调试模式：打开收藏页面，并打印页面结构以便分析
     """
-    from src.utils import get_path
     
     browser_data_dir = Path.cwd() / "browser_data"
     browser_data_dir.mkdir(exist_ok=True)
     
     print("[DEBUG] 启动调试模式...")
     
-    with sync_playwright() as p:
-        context = p.chromium.launch_persistent_context(
+    async with async_playwright() as p:
+        context = await p.chromium.launch_persistent_context(
             user_data_dir=str(browser_data_dir),
             headless=False,
             channel="chrome"
         )
         
-        page = context.pages[0] if context.pages else context.new_page()
-        page.goto("https://webcatalog.circle.ms/Favorite/List", wait_until="networkidle")
+        page = context.pages[0] if context.pages else await context.new_page()
+        await page.goto("https://webcatalog.circle.ms/Favorite/List", wait_until="networkidle")
         
         print("\n[DEBUG] 当前页面 URL:", page.url)
-        print("[DEBUG] 页面标题:", page.title())
+        print("[DEBUG] 页面标题:", await page.title())
         print("\n[DEBUG] 请在浏览器中检查页面结构")
         print("[DEBUG] 按 Ctrl+C 退出")
         
         try:
-            page.wait_for_timeout(300000)  # 等待 5 分钟
+            await page.wait_for_timeout(300000)  # 等待 5 分钟
         except KeyboardInterrupt:
             print("\n[DEBUG] 用户中断")
         
-        context.close()
-
+        await context.close()

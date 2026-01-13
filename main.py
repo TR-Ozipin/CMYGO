@@ -1,7 +1,7 @@
 import os
 import argparse
+import asyncio
 from collections import defaultdict
-from pathlib import Path
 
 from src.utils import load_config, get_path
 from src.core import get_latest_comike_info, load_csv_dicts, extract_booth_from_filename
@@ -111,14 +111,14 @@ def main():
         run_rename(config)
     elif args.action == 'sync':
         from src.catalog_sync import run_catalog_sync
-        run_catalog_sync(config)
+        asyncio.run(run_catalog_sync(config))
     elif args.action == 'sync-debug':
         from src.catalog_sync import run_catalog_sync_debug
-        run_catalog_sync_debug(config)
+        asyncio.run(run_catalog_sync_debug(config))
     elif args.action == 'auto':
         from src.rename import run_rename
         from src.catalog_sync import run_catalog_sync
-        run_catalog_sync(config)  # 先同步最新收藏
+        asyncio.run(run_catalog_sync(config))  # 先同步最新收藏
         run_rename(config)  # 然后重命名
         run_monitor(config)  # 最后生成报告
 
