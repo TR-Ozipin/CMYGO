@@ -1,18 +1,21 @@
 event_name: "C107"
 
 paths:
-  # 数据库文件路径 (建议放入 data 目录)
-  database: "data/插画师数据库 - 主表.csv"
-  
+  # SQLite 数据库文件路径
+  database: "data/database.db"
+
+  # CSV 数据库文件路径 (用于初次迁移，迁移后可删除)
+  csv_database: "data/插画师数据库 - 主表.csv"
+
   # Comike Info CSV 下载目录
   comike_info_dir: "data/comike_info"
-  
+
   # 品书图片目录
   shinagaki_dir: "data/shinagaki"
-  
+
   # 输出 HTML 文件的路径
   output_dir: "output"
-  
+
   # 备份原文件目录 (自动在 shinagaki_dir 下创建，或指定绝对路径)
   backup_subdir_name: "原名备份"
   processed_subdir_name: "已处理"

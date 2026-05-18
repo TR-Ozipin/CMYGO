@@ -1,26 +1,70 @@
 import csv
+import json
 from pathlib import Path
 from datetime import datetime
 from playwright.async_api import async_playwright, TimeoutError as PlaywrightTimeout
 
-def save_favorites_to_csv(favorites_data, output_dir):
-    """
-    将收藏数据保存为 Comike_Info CSV 格式
-    """
+def save_favorites_to_csv(favorites_data: list[dict], output_dir: Path) -> Path:
+    """Save favorites data as Comike_Info CSV."""
     timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
     filename = f"Comike_Info_{timestamp}.csv"
     output_path = output_dir / filename
-    
-    # CSV 列名，与现有格式保持一致
-    fieldnames = ['摊位', '社团', '作者', '备注', '合并', '社团详情', '颜色']
-    
-    with open(output_path, 'w', encoding='utf-8-sig', newline='') as f:
+
+    fieldnames = ["摊位", "社团", "作者", "备注", "合并", "社团详情", "颜色"]
+
+    with open(output_path, "w", encoding="utf-8-sig", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames)
         writer.writeheader()
         writer.writerows(favorites_data)
-    
-    print(f"[OK] 导出 CSV: {output_path} (共 {len(favorites_data)} 条)")
+
+    print(f"[OK] Exported CSV: {output_path} ({len(favorites_data)} rows)")
     return output_path
+
+
+def save_favorites_to_db(
+    favorites_data: list[dict], db_path: Path, event_name: str
+) -> None:
+    """Save favorites data to SQLite database."""
+    from src.database import init_db, get_connection
+
+    init_db(db_path)
+
+    with get_connection(db_path) as conn:
+        count = 0
+        for row in favorites_data:
+            booth = (row.get("摊位") or "").strip() or None
+            circle_name = (row.get("社团") or "").strip()
+            if not circle_name:
+                continue
+
+            author = (row.get("作者") or "").strip() or None
+            notes = (row.get("备注") or "").strip() or None
+            merged = (row.get("合并") or "").strip() or None
+            detail_url = (row.get("社团详情") or "").strip() or None
+            color = (row.get("颜色") or "").strip() or None
+
+            conn.execute(
+                """
+                INSERT INTO comike_info (
+                    event_name, booth, circle_name, author, notes,
+                    merged, detail_url, color
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    event_name,
+                    booth,
+                    circle_name,
+                    author,
+                    notes,
+                    merged,
+                    detail_url,
+                    color,
+                ),
+            )
+            count += 1
+
+        conn.commit()
+        print(f"[OK] Saved {count} rows to database: {db_path.name}")
 
 async def extract_favorites_from_page(page):
     """
@@ -40,7 +84,6 @@ async def extract_favorites_from_page(page):
     
     # 方法1: 尝试提取页面中的 JSON 数据（最稳定）
     try:
-        import json
         json_element = await page.query_selector('#TheModel')
         if json_element:
             json_text = await json_element.inner_text()
@@ -53,18 +96,18 @@ async def extract_favorites_from_page(page):
                     # 提取推特链接
                     twitter_url = circle.get('TwitterUrl', '')
                     pixiv_url = circle.get('PixivUrl', '')
-                    備注_links = []
+                    link_list = []
                     if twitter_url:
-                        備注_links.append(twitter_url)
+                        link_list.append(twitter_url)
                     if pixiv_url:
-                        備注_links.append(pixiv_url)
-                    
+                        link_list.append(pixiv_url)
+
                     # 构造数据
                     data_row = {
-                        '摊位': circle.get('HaichiStr', '').replace('曜日', '').strip(),  # 去掉"曜日"
+                        '摊位': circle.get('HaichiStr', '').replace('曜日', '').strip(),
                         '社团': circle.get('Name', ''),
                         '作者': circle.get('Author', ''),
-                        '备注': ' '.join(備注_links),  # 外部链接
+                        '备注': ' '.join(link_list),
                         '合并': '',  # 后续计算
                         '社团详情': f"https://webcatalog-free.circle.ms/Circle/{circle.get('Id', '')}" if circle.get('Id') else '',
                         '颜色': f"color-{circle.get('Favorite', {}).get('Color', 0)}" if circle.get('Favorite', {}).get('Color', 0) > 0 else ''
@@ -126,13 +169,14 @@ async def extract_favorites_from_page(page):
     return favorites
 
 async def run_catalog_sync(config):
-    """
-    运行 Circle.ms 收藏同步
-    """
+    """Run Circle.ms favorites sync."""
     from src.utils import get_path
-    
-    output_dir = get_path(config, 'paths.comike_info_dir')
+
+    output_dir = get_path(config, "paths.comike_info_dir")
     output_dir.mkdir(parents=True, exist_ok=True)
+
+    db_path = get_path(config, "paths.database")
+    event_name = config.get("event_name", "C107")
     
     # 浏览器数据目录 (存放 Cookie 和登录状态)
     browser_data_dir = Path.cwd() / "browser_data"
@@ -201,8 +245,21 @@ async def run_catalog_sync(config):
                 # 如果当前已是最后一页，则退出
             
             # 尝试查找"下一页"按钮
-            # 在实际页面中，如果有多页，会有类似的结构
-            next_link = await page.query_selector('a[href*="page="]:has-text("次へ"), a[href*="page="]:has-text("›"), a.next')
+            # 支持多种语言/符号: 日语"次へ", 英语"Next", 箭头"›"/"»", 常见 CSS class
+            next_selectors = [
+                'a[href*="page="]:has-text("次へ")',
+                'a[href*="page="]:has-text("Next")',
+                'a[href*="page="]:has-text("›")',
+                'a[href*="page="]:has-text("»")',
+                'a.next',
+                'a[aria-label="Next"]',
+                'button.next',
+            ]
+            next_link = None
+            for selector in next_selectors:
+                next_link = await page.query_selector(selector)
+                if next_link:
+                    break
             
             if next_link and not await next_link.is_disabled():
                 print("[INFO] 跳转到下一页...")
@@ -220,11 +277,13 @@ async def run_catalog_sync(config):
         
         print(f"[OK] 共收集到 {len(all_favorites)} 个收藏社团")
         
-        # 保存为 CSV
+        # Save to CSV and database
         if all_favorites:
             save_favorites_to_csv(all_favorites, output_dir)
+            if db_path:
+                save_favorites_to_db(all_favorites, db_path, event_name)
         else:
-            print("[WARN] 未提取到任何数据，请检查页面选择器是否正确")
+            print("[WARN] No data extracted, check page selectors")
         
         # 关闭浏览器
         print("[INFO] 关闭浏览器...")

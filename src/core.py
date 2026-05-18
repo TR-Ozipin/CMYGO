@@ -1,4 +1,3 @@
-import os
 import csv
 from datetime import datetime
 from pathlib import Path
@@ -48,10 +47,8 @@ def load_csv_dicts(path, encoding='utf-8'):
         raise
 
 def extract_booth_from_filename(filename):
-    """
-    从文件名提取摊位号
-    """
-    base = os.path.splitext(filename)[0].strip()
+    """Extract booth number from filename."""
+    base = Path(filename).stem.strip()
     if not base:
         return None
     return base.split()[0]

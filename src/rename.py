@@ -1,9 +1,14 @@
 import shutil
 import re
 from collections import defaultdict
+from pathlib import Path
 
 from src.utils import get_path
-from src.core import get_latest_comike_info, load_csv_dicts
+from src.database import (
+    query_circle_by_twitter_id,
+    get_circle_to_booth_map,
+    query_comike_info,
+)
 
 def replace_illegal_chars(name):
     """
@@ -34,56 +39,44 @@ def extract_twitter_id(filename, pattern):
     return None
 
 def run_rename(config):
-    """
-    运行重命名逻辑
-    """
-    # 1. 获取配置
-    db_path = get_path(config, 'paths.database')
-    comike_dir = get_path(config, 'paths.comike_info_dir')
-    shinagaki_dir = get_path(config, 'paths.shinagaki_dir')
-    backup_name = config.get('paths', {}).get('backup_subdir_name', '原名备份')
-    processed_name = config.get('paths', {}).get('processed_subdir_name', '已处理')
-    twitter_pattern = config.get('patterns', {}).get('twitter_id', r"twitter-([^-]+)-\d+-\d+")
+    """Run rename logic using SQLite database."""
+    # 1. Get config
+    db_path = get_path(config, "paths.database")
+    event_name = config.get("event_name", "C107")
+    shinagaki_dir = get_path(config, "paths.shinagaki_dir")
+    backup_name = config.get("paths", {}).get("backup_subdir_name", "原名备份")
+    processed_name = config.get("paths", {}).get("processed_subdir_name", "已处理")
+    twitter_pattern = config.get("patterns", {}).get(
+        "twitter_id", r"twitter-([^-]+)-\d+-\d+"
+    )
+
+    if not db_path or not db_path.exists():
+        print(f"[ERROR] Database not found: {db_path}")
+        print("[INFO] Run 'uv run python main.py migrate' first to import CSV to SQLite")
+        return
 
     processed_dir = shinagaki_dir / processed_name
     backup_dir = shinagaki_dir / backup_name
 
-    # 创建必要目录
+    # Create required directories
     processed_dir.mkdir(parents=True, exist_ok=True)
     backup_dir.mkdir(parents=True, exist_ok=True)
 
-    print(f"[INFO] 正在处理目录: {shinagaki_dir}")
+    print(f"[INFO] Processing directory: {shinagaki_dir}")
+    print(f"[INFO] Loading database: {db_path.name}")
 
-    # 2. 读取数据
-    if not comike_dir.exists():
-        print(f"[ERROR] Comike Info 目录不存在: {comike_dir}")
-        return
-        
-    comike_info_file = get_latest_comike_info(comike_dir)
-    if not comike_info_file:
-        print("[ERROR] 未找到 Comike_Info_*.csv 文件")
-        return
+    # 2. Build circle -> booth map from database
+    circle_to_booth = get_circle_to_booth_map(db_path, event_name)
 
-    if not db_path.exists():
-        print(f"[ERROR] 数据库文件不存在: {db_path}")
-        return
+    # 3. Load comike info for fallback matching
+    comike_rows = list(query_comike_info(db_path, event_name))
 
-    print(f"[INFO] 加载数据库: {db_path.name}")
-    database_rows = load_csv_dicts(db_path)
-    print(f"[INFO] 加载 Info: {comike_info_file.name}")
-    comike_info_rows = load_csv_dicts(comike_info_file)
-
-    # 3. 建立索引
-    circle_to_booth = {row['社团']: row['摊位'] for row in comike_info_rows}
-
-    # 4. 按 Twitter ID 分组文件
-    twitter_id_to_files = defaultdict(list)
+    # 4. Group files by Twitter ID
+    twitter_id_to_files: dict[str, list[Path]] = defaultdict(list)
     for entry in shinagaki_dir.iterdir():
         if not entry.is_file():
             continue
-        
-        # 跳过隐藏文件
-        if entry.name.startswith('.'):
+        if entry.name.startswith("."):
             continue
 
         twitter_id = extract_twitter_id(entry.name, twitter_pattern)
@@ -92,64 +85,67 @@ def run_rename(config):
 
         twitter_id_to_files[twitter_id].append(entry)
 
-    print(f"[INFO] 找到 {len(twitter_id_to_files)} 个 Twitter ID 对应的文件组")
+    print(f"[INFO] Found {len(twitter_id_to_files)} Twitter ID file groups")
 
-    # 5. 处理每个 Twitter ID 组
+    # 5. Process each Twitter ID group
     for twitter_id, files in twitter_id_to_files.items():
-        files.sort(key=lambda x: x.name)  # 保证顺序一致
+        files.sort(key=lambda x: x.name)
 
-        # 5.1 在数据库匹配
-        matched_row = next(
-            (
-                row for row in database_rows
-                if row.get('推特ID', '').lower() == twitter_id
-                or row.get('推特ID（备用）', '').lower() == twitter_id
-            ),
-            None
-        )
+        # 5.1 Match by Twitter ID in database
+        matched_row = query_circle_by_twitter_id(db_path, twitter_id)
 
-        # 5.2 匹配不到时，尝试备注匹配
+        # 5.2 Fallback: match by notes in comike info
         if not matched_row:
             search_key = f".com/{twitter_id}"
             matched_comike_row = next(
-                (row for row in comike_info_rows if search_key.lower() in row.get('备注', '').lower()),
-                None
+                (
+                    row
+                    for row in comike_rows
+                    if row.get("notes")
+                    and search_key.lower() in row["notes"].lower()
+                ),
+                None,
             )
 
             if matched_comike_row:
-                merge_name = matched_comike_row.get('合并', '').strip()
-                # 执行备注匹配的重命名
-                _process_files(files, merge_name, processed_dir, backup_dir, twitter_id, "备注匹配")
-            else:
-                # 确实找不到
-                pass
+                merge_name = (matched_comike_row.get("merged") or "").strip()
+                _process_files(files, merge_name, processed_dir, backup_dir, "备注匹配")
             continue
 
-        # 5.3 数据库匹配成功，提取信息
-        circle_default = matched_row.get('社团（默认）', '').strip()
-        identifier = matched_row.get('标识符', '').strip()
-        
-        # 获取摊位号
-        booth = circle_to_booth.get(circle_default, '').strip()
+        # 5.3 Database match succeeded
+        circle_name = (matched_row.get("name") or "").strip()
+        identifier = (matched_row.get("identifier") or "").strip()
+
+        # Get booth number
+        booth = (circle_to_booth.get(circle_name) or "").strip()
 
         if not booth:
-            print(f"[WARN] 无摊位信息: {circle_default} (Twitter: {twitter_id}) - 尝试备注匹配")
-            # 再次尝试备注匹配作为回退
+            print(
+                f"[WARN] No booth info: {circle_name} (Twitter: {twitter_id})"
+                f" - trying fallback"
+            )
             search_key = f".com/{twitter_id}"
             matched_comike_row = next(
-                (row for row in comike_info_rows if search_key.lower() in row.get('备注', '').lower()),
-                None
+                (
+                    row
+                    for row in comike_rows
+                    if row.get("notes")
+                    and search_key.lower() in row["notes"].lower()
+                ),
+                None,
             )
             if matched_comike_row:
-                 merge_name = matched_comike_row.get('合并', '').strip()
-                 _process_files(files, merge_name, processed_dir, backup_dir, twitter_id, "备注匹配(回退)")
+                merge_name = (matched_comike_row.get("merged") or "").strip()
+                _process_files(
+                    files, merge_name, processed_dir, backup_dir, "备注匹配(回退)"
+                )
             continue
 
-        # 构造新文件名基底: "摊位号 标识符"
+        # Build new filename base: "booth identifier"
         base_name_str = f"{booth} {identifier}"
-        _process_files(files, base_name_str, processed_dir, backup_dir, twitter_id, "数据库匹配")
+        _process_files(files, base_name_str, processed_dir, backup_dir, "数据库匹配")
 
-def _process_files(files, base_name_raw, processed_dir, backup_dir, twitter_id, match_type):
+def _process_files(files, base_name_raw, processed_dir, backup_dir, match_type):
     """
     执行具体的文件复制和移动操作
     """
