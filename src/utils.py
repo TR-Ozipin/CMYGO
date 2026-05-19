@@ -1,5 +1,35 @@
+import logging
+import sys
+
 import yaml
 from pathlib import Path
+
+
+def setup_logging(level: str = "INFO", log_file: str | None = None) -> None:
+    """Configure project-wide logging.
+
+    Args:
+        level: Log level string (DEBUG, INFO, WARNING, ERROR).
+        log_file: Optional path to a log file for DEBUG output.
+    """
+    root = logging.getLogger()
+    root.setLevel(logging.DEBUG)
+
+    # Console handler — INFO level with clean format
+    console = logging.StreamHandler(sys.stderr)
+    console.setLevel(getattr(logging, level.upper(), logging.INFO))
+    console.setFormatter(logging.Formatter("[%(levelname)s] %(message)s"))
+    root.addHandler(console)
+
+    # Optional file handler — DEBUG level for troubleshooting
+    if log_file:
+        fh = logging.FileHandler(log_file, encoding="utf-8")
+        fh.setLevel(logging.DEBUG)
+        fh.setFormatter(
+            logging.Formatter("%(asctime)s [%(levelname)s] %(name)s: %(message)s")
+        )
+        root.addHandler(fh)
+
 
 def load_config(config_path="config.yaml"):
     """

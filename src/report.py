@@ -1,4 +1,7 @@
+import logging
 import re
+
+logger = logging.getLogger(__name__)
 
 _url_re = re.compile(r'(https?://[^\s"\'<>]+)')
 
@@ -75,5 +78,5 @@ def generate_html_report(rows, color, output_dir):
 
         f.write('</table>\n</body>\n</html>\n')
     
-    print(f"[OK] 写出 HTML: {out_path} (行数: {len(rows)})")
+    logger.info("写出 HTML: %s (行数: %d)", out_path, len(rows))
 

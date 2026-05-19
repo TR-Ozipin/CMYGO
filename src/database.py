@@ -1,8 +1,11 @@
+import logging
 import sqlite3
 import csv
 from pathlib import Path
 from typing import Any
 from collections.abc import Iterator
+
+logger = logging.getLogger(__name__)
 
 
 def get_connection(db_path: Path) -> sqlite3.Connection:
@@ -47,12 +50,20 @@ def init_db(db_path: Path) -> None:
                 merged TEXT,
                 detail_url TEXT,
                 color TEXT,
-                imported_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                imported_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(event_name, booth, circle_name)
             );
 
             CREATE INDEX IF NOT EXISTS idx_comike_event ON comike_info(event_name);
             CREATE INDEX IF NOT EXISTS idx_comike_circle ON comike_info(circle_name);
             CREATE INDEX IF NOT EXISTS idx_comike_booth ON comike_info(booth);
+
+            CREATE TABLE IF NOT EXISTS vision_cache (
+                image_hash TEXT PRIMARY KEY,
+                result_json TEXT NOT NULL,
+                confidence REAL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
         """
         )
         conn.commit()
@@ -66,7 +77,8 @@ def migrate_csv_to_db(csv_path: Path, db_path: Path) -> int:
     init_db(db_path)
 
     with get_connection(db_path) as conn:
-        rows = list(csv.DictReader(open(csv_path, encoding="utf-8-sig")))
+        with open(csv_path, encoding="utf-8-sig") as f:
+            rows = list(csv.DictReader(f))
         count = 0
 
         for row in rows:
@@ -96,16 +108,20 @@ def migrate_csv_to_db(csv_path: Path, db_path: Path) -> int:
             count += 1
 
         conn.commit()
-        print(f"[OK] Migrated {count} rows from {csv_path.name} to {db_path.name}")
+        logger.info("Migrated %d rows from %s to %s", count, csv_path.name, db_path.name)
         return count
 
 
 def import_comike_info(csv_path: Path, db_path: Path, event_name: str) -> int:
-    """Import Comike Info CSV into comike_info table. Returns row count."""
+    """Import Comike Info CSV into comike_info table. Returns row count.
+
+    Uses INSERT OR IGNORE to skip duplicate (event_name, booth, circle_name) rows.
+    """
     init_db(db_path)
 
     with get_connection(db_path) as conn:
-        rows = list(csv.DictReader(open(csv_path, encoding="utf-8-sig")))
+        with open(csv_path, encoding="utf-8-sig") as f:
+            rows = list(csv.DictReader(f))
         count = 0
 
         for row in rows:
@@ -122,7 +138,7 @@ def import_comike_info(csv_path: Path, db_path: Path, event_name: str) -> int:
 
             conn.execute(
                 """
-                INSERT INTO comike_info (
+                INSERT OR IGNORE INTO comike_info (
                     event_name, booth, circle_name, author, notes,
                     merged, detail_url, color
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
@@ -132,7 +148,7 @@ def import_comike_info(csv_path: Path, db_path: Path, event_name: str) -> int:
             count += 1
 
         conn.commit()
-        print(f"[OK] Imported {count} comike info rows for {event_name}")
+        logger.info("Imported %d comike info rows for %s", count, event_name)
         return count
 
 
@@ -233,3 +249,44 @@ def enrich_with_db_links(
         row["数据库链接"] = db_row.get("twitter_url", "") if db_row else ""
         result.append(row)
     return result
+
+
+def get_vision_cache(db_path: Path, image_hash: str) -> dict[str, Any] | None:
+    """Look up cached vision recognition result by image hash."""
+    with get_connection(db_path) as conn:
+        cursor = conn.execute(
+            "SELECT result_json, confidence FROM vision_cache WHERE image_hash = ?",
+            (image_hash,),
+        )
+        row = cursor.fetchone()
+        if row:
+            import json
+            try:
+                return json.loads(row["result_json"])
+            except (json.JSONDecodeError, TypeError):
+                return None
+    return None
+
+
+def save_vision_cache(
+    db_path: Path, image_hash: str, result: dict[str, Any]
+) -> None:
+    """Save a vision recognition result to cache."""
+    import json
+
+    confidence = result.get("confidence", 0.0)
+    try:
+        confidence = float(confidence) if confidence is not None else 0.0
+    except (TypeError, ValueError):
+        confidence = 0.0
+
+    with get_connection(db_path) as conn:
+        conn.execute(
+            """
+            INSERT OR REPLACE INTO vision_cache (image_hash, result_json, confidence)
+            VALUES (?, ?, ?)
+            """,
+            (image_hash, json.dumps(result, ensure_ascii=False), confidence),
+        )
+        conn.commit()
+    logger.debug("Cached vision result for hash %s (confidence=%.2f)", image_hash[:12], confidence)

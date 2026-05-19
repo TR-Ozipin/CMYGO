@@ -24,8 +24,20 @@ filters:
   # 想输出的颜色列表，例如 ['color-1', 'color-3']，留空 [] 表示全部颜色
   target_colors: []
 
+# 浏览器配置
+browser:
+  headless: false       # 首次运行建议 false（需要手动登录）
+  channel: "chrome"     # 使用系统 Chrome
+
 # 文件名解析规则
 patterns:
   # 提取推特ID的正则: twitter-([^-]+)-\d+-\d+
   twitter_id: "twitter-([^-]+)-\\d+-\\d+"
 
+# Vision LLM 配置 (品书图片识别)
+vision:
+  enabled: false                        # 是否启用 Vision 识别
+  api_base: "http://localhost:1234/v1"  # LM Studio 本地地址
+  model: "qwen2.5-vl-7b"               # LM Studio 中加载的模型名
+  confidence_threshold: 0.8             # 低于此值标记为手动 review
+  # api_key 从环境变量 VISION_API_KEY 读取（LM Studio 可用任意值）

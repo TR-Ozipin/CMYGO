@@ -1,9 +1,10 @@
 import os
 import argparse
 import asyncio
+import logging
 from collections import defaultdict
 
-from src.utils import load_config, get_path
+from src.utils import load_config, get_path, setup_logging
 from src.core import extract_booth_from_filename
 from src.database import (
     migrate_csv_to_db,
@@ -12,6 +13,8 @@ from src.database import (
     enrich_with_db_links,
 )
 from src.report import generate_html_report
+
+logger = logging.getLogger(__name__)
 
 def run_monitor(config):
     """Run progress monitoring logic using SQLite database."""
@@ -23,14 +26,14 @@ def run_monitor(config):
     target_colors = config.get("filters", {}).get("target_colors", [])
 
     if not db_path or not db_path.exists():
-        print(f"[ERROR] Database not found: {db_path}")
-        print("[INFO] Run 'uv run python main.py migrate' first")
+        logger.error("Database not found: %s", db_path)
+        logger.info("Run 'uv run python main.py migrate' first")
         return
 
     # Ensure output directory exists
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    print(f"[INFO] Scanning shinagaki directory: {shinagaki_dir}")
+    logger.info("Scanning shinagaki directory: %s", shinagaki_dir)
 
     # 2. Get existing booths from files
     existing_booths: set[str] = set()
@@ -42,22 +45,22 @@ def run_monitor(config):
                 booth = extract_booth_from_filename(fn)
                 if booth:
                     existing_booths.add(booth.strip())
-    print(f"[INFO] Existing booth count: {len(existing_booths)}")
+    logger.info("Existing booth count: %d", len(existing_booths))
 
     # 3. Get remaining circles from database
     remaining_iter = get_remaining_circles(db_path, event_name, existing_booths)
-    print(f"[INFO] Event: {event_name}")
+    logger.info("Event: %s", event_name)
 
     # 4. Enrich with database links
     remaining = enrich_with_db_links(remaining_iter, db_path)
-    print(f"[INFO] Remaining rows without shinagaki: {len(remaining)}")
+    logger.info("Remaining rows without shinagaki: %d", len(remaining))
 
     # 5. Group by color
     groups: dict[str, list[dict]] = defaultdict(list)
     for r in remaining:
         color = (r.get("color") or "").strip() or "无颜色"
         groups[color].append(r)
-    print(f"[INFO] Color group count: {len(groups)}")
+    logger.info("Color group count: %d", len(groups))
 
     # 6. Generate HTML reports
     for color, rows in groups.items():
@@ -71,15 +74,15 @@ def run_migrate(config):
     db_path = get_path(config, "paths.database")
 
     if not csv_path or not csv_path.exists():
-        print(f"[ERROR] CSV file not found: {csv_path}")
-        print("[INFO] Place your illustrator database CSV at the path in config.yaml")
+        logger.error("CSV file not found: %s", csv_path)
+        logger.info("Place your illustrator database CSV at the path in config.yaml")
         return
 
     init_db(db_path)
     try:
         migrate_csv_to_db(csv_path, db_path)
     except Exception as e:
-        print(f"[ERROR] Migration failed: {e}")
+        logger.error("Migration failed: %s", e)
         return
 
     # Also import existing Comike Info CSVs into database
@@ -95,7 +98,7 @@ def run_migrate(config):
 
                 import_comike_info(latest, db_path, event_name)
             except Exception as e:
-                print(f"[WARN] Failed to import comike info: {e}")
+                logger.warning("Failed to import comike info: %s", e)
 
 
 def main():
@@ -114,7 +117,7 @@ def main():
     try:
         config = load_config(args.config)
     except Exception as e:
-        print(f"[ERROR] Failed to load config: {e}")
+        logger.error("Failed to load config: %s", e)
         return
 
     if args.action == "migrate":
@@ -140,18 +143,19 @@ def main():
         try:
             asyncio.run(run_catalog_sync(config))
         except Exception as e:
-            print(f"[ERROR] sync failed: {e}")
+            logger.error("sync failed: %s", e)
             return
         try:
             run_rename(config)
         except Exception as e:
-            print(f"[ERROR] rename failed: {e}")
+            logger.error("rename failed: %s", e)
             return
         try:
             run_monitor(config)
         except Exception as e:
-            print(f"[ERROR] monitor failed: {e}")
+            logger.error("monitor failed: %s", e)
             return
 
 if __name__ == '__main__':
+    setup_logging()
     main()
