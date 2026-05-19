@@ -329,3 +329,21 @@ def save_capture(
              image_hash, captured_at),
         )
         conn.commit()
+
+
+def query_captures_by_twitter_id(
+    db_path: Path, twitter_id: str
+) -> list[dict[str, Any]]:
+    """Get all capture records for a given twitter_id."""
+    with get_connection(db_path) as conn:
+        cursor = conn.execute(
+            """
+            SELECT twitter_id, tweet_url, tweet_text, image_filename,
+                   image_hash, captured_at
+            FROM captures
+            WHERE LOWER(twitter_id) = ?
+            ORDER BY captured_at DESC
+            """,
+            (twitter_id.lower(),),
+        )
+        return [dict(row) for row in cursor]

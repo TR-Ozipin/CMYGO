@@ -11,6 +11,7 @@ from src.database import (
     get_vision_cache,
     save_vision_cache,
     query_comike_info,
+    query_captures_by_twitter_id,
 )
 
 logger = logging.getLogger(__name__)
@@ -44,6 +45,81 @@ def extract_twitter_id(filename, pattern):
     if match:
         return match.group(1).lower()
     return None
+
+
+# Common booth patterns found in CM shinagaki tweets
+# Matches patterns like: 水 西あ52ab, 日 東A-12ab, 1日目 西れ44a
+_BOOTH_PATTERNS = [
+    # "日/水 方角+ホール+番号" style (most common)
+    re.compile(
+        r'([日水土金1-3１-３一二三](?:日目)?\s*'
+        r'[東西南北]\s*[あ-んア-ンa-zA-Zａ-ｚＡ-Ｚ]'
+        r'\s*\d{1,3}\s*[a-zA-Zａ-ｚＡ-Ｚ]{0,2})'
+    ),
+    # Hall-Number style: "A-01ab", "東5 あ01a"
+    re.compile(
+        r'([東西南北]\d?\s*[あ-んア-ンa-zA-Z]\s*\d{1,3}[a-zA-Z]{0,2})'
+    ),
+]
+
+
+def _extract_booth_from_text(text: str) -> str | None:
+    """Try to extract a booth location from free-form tweet text.
+
+    Returns the first matched booth string or None.
+    """
+    for pattern in _BOOTH_PATTERNS:
+        m = pattern.search(text)
+        if m:
+            return m.group(1).strip()
+    return None
+
+
+def _try_tweet_text_match(
+    files: list[Path],
+    twitter_id: str,
+    db_path: Path,
+    comike_rows: list[dict],
+    processed_dir: Path,
+    backup_dir: Path,
+) -> bool:
+    """Try matching using tweet text from captures table.
+
+    Looks up captures for this twitter_id, extracts booth info from
+    tweet_text, and matches against comike_info.
+
+    Returns True if successfully matched and processed.
+    """
+    captures = query_captures_by_twitter_id(db_path, twitter_id)
+    if not captures:
+        return False
+
+    for capture in captures:
+        tweet_text = capture.get("tweet_text") or ""
+        if not tweet_text:
+            continue
+
+        booth = _extract_booth_from_text(tweet_text)
+        if not booth:
+            continue
+
+        # Try to match extracted booth against comike_info
+        for row in comike_rows:
+            db_booth = (row.get("booth") or "").strip()
+            if db_booth and db_booth == booth:
+                merged = (row.get("merged") or "").strip()
+                if merged:
+                    logger.info(
+                        "Tweet text booth match: @%s -> %s (from: %s)",
+                        twitter_id, booth, tweet_text[:50],
+                    )
+                    _process_files(
+                        files, merged, processed_dir, backup_dir,
+                        "推文文本匹配",
+                    )
+                    return True
+
+    return False
 
 
 def _try_vision_match(
@@ -298,7 +374,37 @@ def run_rename(config):
         base_name_str = f"{booth} {identifier}"
         _process_files(files, base_name_str, processed_dir, backup_dir, "数据库匹配")
 
-    # 8. Vision LLM fallback for unmatched files
+    # 8. Tweet text matching for unmatched files (before Vision)
+    if vision_pending:
+        still_pending: list[Path] = []
+        # Group vision_pending by twitter_id for batch lookup
+        pending_by_twitter: dict[str, list[Path]] = defaultdict(list)
+        pending_no_twitter: list[Path] = []
+
+        for fp in vision_pending:
+            tid = extract_twitter_id(fp.name, twitter_pattern)
+            if tid:
+                pending_by_twitter[tid].append(fp)
+            else:
+                pending_no_twitter.append(fp)
+
+        for tid, fps in pending_by_twitter.items():
+            if _try_tweet_text_match(
+                fps, tid, db_path, comike_rows, processed_dir, backup_dir
+            ):
+                pass  # Successfully matched
+            else:
+                still_pending.extend(fps)
+
+        still_pending.extend(pending_no_twitter)
+        vision_pending = still_pending
+        if vision_pending:
+            logger.info(
+                "%d files remain after tweet text matching",
+                len(vision_pending),
+            )
+
+    # 9. Vision LLM fallback for remaining unmatched files
     all_vision_candidates = vision_pending + no_twitter_id_files
     unrecognized: list[Path] = []
 

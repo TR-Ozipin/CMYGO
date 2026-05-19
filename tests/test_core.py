@@ -1,7 +1,7 @@
 """Tests for core utility functions."""
 
 from src.core import extract_booth_from_filename
-from src.rename import extract_twitter_id, replace_illegal_chars
+from src.rename import extract_twitter_id, replace_illegal_chars, _extract_booth_from_text
 
 
 class TestExtractTwitterId:
@@ -78,3 +78,37 @@ class TestExtractBoothFromFilename:
 
     def test_no_extension(self):
         assert extract_booth_from_filename("A01 Name") == "A01"
+
+
+class TestExtractBoothFromText:
+    """Test booth extraction from tweet text (free-form)."""
+
+    def test_standard_cm_format(self):
+        text = "C107 新刊情報！ 水 西あ52ab で参加します"
+        assert _extract_booth_from_text(text) == "水 西あ52ab"
+
+    def test_day_prefix(self):
+        text = "1日目 東A12a に配置されました"
+        assert _extract_booth_from_text(text) is not None
+        result = _extract_booth_from_text(text)
+        assert "東" in result
+        assert "12" in result
+
+    def test_simple_hall_booth(self):
+        text = "西れ44a"
+        result = _extract_booth_from_text(text)
+        assert result is not None
+        assert "西" in result
+
+    def test_no_booth_in_text(self):
+        text = "今日はいい天気ですね。新刊出します！"
+        assert _extract_booth_from_text(text) is None
+
+    def test_empty_text(self):
+        assert _extract_booth_from_text("") is None
+
+    def test_text_with_multiple_info(self):
+        text = "C107参加します！\n日 西あ52ab\nサークル名: テスト\n新刊2冊出します"
+        result = _extract_booth_from_text(text)
+        assert result is not None
+        assert "西" in result
