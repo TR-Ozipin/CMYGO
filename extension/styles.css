@@ -1,0 +1,51 @@
+/* CMYGO Capture — Button styles */
+
+.cmygo-capture-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  cursor: pointer;
+  font-size: 16px;
+  transition: background-color 0.2s, transform 0.15s;
+  margin: 4px 0;
+  padding: 0;
+  line-height: 1;
+  position: relative;
+  z-index: 10;
+}
+
+.cmygo-capture-btn:hover {
+  background-color: rgba(29, 155, 240, 0.1);
+  transform: scale(1.15);
+}
+
+.cmygo-capture-btn:active {
+  transform: scale(0.95);
+}
+
+.cmygo-capture-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+/* Success state animation */
+.cmygo-capture-btn.cmygo-captured {
+  animation: cmygo-pulse 0.4s ease-out;
+}
+
+@keyframes cmygo-pulse {
+  0% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.3);
+  }
+  100% {
+    transform: scale(1);
+  }
+}

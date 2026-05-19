@@ -1,0 +1,34 @@
+{
+  "manifest_version": 3,
+  "name": "CMYGO Capture",
+  "version": "1.0.0",
+  "description": "一键捕获 X/Twitter 品書推文，保存图片和元数据供 CMYGO 入库",
+  "permissions": [
+    "downloads",
+    "activeTab",
+    "storage"
+  ],
+  "host_permissions": [
+    "https://x.com/*",
+    "https://twitter.com/*"
+  ],
+  "content_scripts": [
+    {
+      "matches": [
+        "https://x.com/*",
+        "https://twitter.com/*"
+      ],
+      "js": ["content.js"],
+      "css": ["styles.css"],
+      "run_at": "document_idle"
+    }
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "CMYGO Capture"
+  },
+  "icons": {}
+}

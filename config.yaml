@@ -41,3 +41,8 @@ vision:
   model: "qwen2.5-vl-7b"               # LM Studio 中加载的模型名
   confidence_threshold: 0.8             # 低于此值标记为手动 review
   # api_key 从环境变量 VISION_API_KEY 读取（LM Studio 可用任意值）
+
+# 捕获入库配置 (Chrome 插件 CMYGO Capture)
+ingest:
+  dir: "~/Downloads/cmygo"              # Chrome 插件保存的目录
+  archive: true                         # 入库后归档原文件到 cmygo/archived/

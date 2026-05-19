@@ -64,6 +64,21 @@ def init_db(db_path: Path) -> None:
                 confidence REAL,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
+
+            CREATE TABLE IF NOT EXISTS captures (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                twitter_id TEXT NOT NULL,
+                tweet_url TEXT,
+                tweet_text TEXT,
+                image_filename TEXT,
+                image_hash TEXT,
+                captured_at TEXT,
+                ingested_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(tweet_url, image_filename)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_captures_twitter ON captures(twitter_id);
+            CREATE INDEX IF NOT EXISTS idx_captures_tweet_url ON captures(tweet_url);
         """
         )
         conn.commit()
@@ -290,3 +305,27 @@ def save_vision_cache(
         )
         conn.commit()
     logger.debug("Cached vision result for hash %s (confidence=%.2f)", image_hash[:12], confidence)
+
+
+def save_capture(
+    db_path: Path,
+    twitter_id: str,
+    tweet_url: str,
+    tweet_text: str,
+    image_filename: str,
+    image_hash: str,
+    captured_at: str,
+) -> None:
+    """Save a captured tweet/image record."""
+    with get_connection(db_path) as conn:
+        conn.execute(
+            """
+            INSERT OR IGNORE INTO captures
+                (twitter_id, tweet_url, tweet_text, image_filename,
+                 image_hash, captured_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (twitter_id, tweet_url, tweet_text, image_filename,
+             image_hash, captured_at),
+        )
+        conn.commit()

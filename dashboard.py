@@ -147,9 +147,12 @@ with st.sidebar:
         (selected_event,),
     )[0]["c"]
     cached_visions = query(conn, "SELECT COUNT(*) as c FROM vision_cache")[0]["c"]
+    total_captures = query(conn, "SELECT COUNT(*) as c FROM captures")[0]["c"]
 
     st.metric("数据库社团数", total_circles)
     st.metric(f"{selected_event} 收藏数", total_comike)
+    if total_captures > 0:
+        st.metric("捕获入库", total_captures)
     if cached_visions > 0:
         st.metric("Vision 缓存", cached_visions)
 
@@ -160,8 +163,8 @@ with st.sidebar:
 # Tabs
 # ---------------------------------------------------------------------------
 
-tab_progress, tab_search, tab_pending, tab_vision = st.tabs(
-    ["📊 收集进度", "🔍 社团搜索", "📋 待收集列表", "🤖 Vision 缓存"]
+tab_progress, tab_search, tab_pending, tab_captures, tab_vision = st.tabs(
+    ["📊 收集进度", "🔍 社团搜索", "📋 待收集列表", "📸 捕获记录", "🤖 Vision 缓存"]
 )
 
 # ---------------------------------------------------------------------------
@@ -359,7 +362,53 @@ with tab_pending:
         )
 
 # ---------------------------------------------------------------------------
-# Tab 4: Vision Cache
+# Tab 4: Captures
+# ---------------------------------------------------------------------------
+
+with tab_captures:
+    st.header("📸 捕获记录")
+
+    captures_data = query(conn, """
+        SELECT twitter_id, tweet_url, tweet_text,
+               image_filename, captured_at, ingested_at
+        FROM captures
+        ORDER BY ingested_at DESC
+        LIMIT 200
+    """)
+
+    if not captures_data:
+        st.info(
+            "暂无捕获记录。安装 Chrome 插件 CMYGO Capture 后，"
+            "在 X/Twitter 上点击 📦 按钮捕获品书，然后运行 "
+            "`python main.py ingest` 入库。"
+        )
+    else:
+        st.success(f"共 {len(captures_data)} 条捕获记录")
+
+        display_rows = []
+        for row in captures_data:
+            text_preview = (row.get("tweet_text") or "")[:80]
+            if len(row.get("tweet_text") or "") > 80:
+                text_preview += "..."
+            display_rows.append({
+                "Twitter ID": row.get("twitter_id", "-"),
+                "图片": row.get("image_filename", "-"),
+                "推文内容": text_preview,
+                "捕获时间": row.get("captured_at", "-"),
+                "推文链接": row.get("tweet_url", ""),
+            })
+
+        st.dataframe(
+            display_rows,
+            use_container_width=True,
+            hide_index=True,
+            column_config={
+                "推文链接": st.column_config.LinkColumn("推文链接", display_text="打开"),
+            },
+        )
+
+# ---------------------------------------------------------------------------
+# Tab 5: Vision Cache
 # ---------------------------------------------------------------------------
 
 with tab_vision:

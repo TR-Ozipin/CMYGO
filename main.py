@@ -105,9 +105,9 @@ def main():
     parser = argparse.ArgumentParser(description="CMYGO automation tool")
     parser.add_argument(
         "action",
-        choices=["monitor", "rename", "auto", "sync", "sync-debug", "migrate"],
+        choices=["monitor", "rename", "auto", "sync", "sync-debug", "migrate", "ingest"],
         help=(
-            "Action to run: monitor, rename, auto, sync, sync-debug, migrate"
+            "Action to run: monitor, rename, auto, sync, sync-debug, migrate, ingest"
         ),
     )
     parser.add_argument("--config", default="config.yaml", help="Config file path")
@@ -136,10 +136,20 @@ def main():
         from src.catalog_sync import run_catalog_sync_debug
 
         asyncio.run(run_catalog_sync_debug(config))
+    elif args.action == "ingest":
+        from src.ingest import run_ingest
+
+        run_ingest(config)
     elif args.action == "auto":
+        from src.ingest import run_ingest
         from src.rename import run_rename
         from src.catalog_sync import run_catalog_sync
 
+        # Ingest captured images first (non-fatal)
+        try:
+            run_ingest(config)
+        except Exception as e:
+            logger.warning("ingest failed (non-fatal): %s", e)
         try:
             asyncio.run(run_catalog_sync(config))
         except Exception as e:
